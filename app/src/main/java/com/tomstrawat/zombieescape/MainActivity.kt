@@ -68,7 +68,7 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             textSize = 14f
             setPadding(32, 32, 32, 32)
-            text = title + "\n\n" + report
+            text = getString(R.string.crash_report_text, title, report)
             movementMethod = ScrollingMovementMethod()
             isVerticalScrollBarEnabled = true
         }
