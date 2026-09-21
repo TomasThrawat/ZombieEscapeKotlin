@@ -415,6 +415,11 @@ class ZombieEscapeView(context: Context) : View(context) {
         drawButton(canvas, buttonRect, "MENU", false)
     }
 
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val x = event.x
         val y = event.y
@@ -501,6 +506,7 @@ class ZombieEscapeView(context: Context) : View(context) {
                     joystickY = joystickBaseY
                 }
                 if (x > width - 230f && y > height - 180f) sprintHeld = false
+                performClick()
                 invalidate()
             }
         }
