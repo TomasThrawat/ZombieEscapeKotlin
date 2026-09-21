@@ -14,7 +14,6 @@ import java.io.PrintWriter
 import java.io.StringWriter
 
 class MainActivity : Activity() {
-
     private val crashReportFile = "zombie_escape_crash.txt"
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -22,8 +21,8 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         try {
-            hideSystemUi()
             setContentView(ZombieEscapeView(this))
+            hideSystemUi()
         } catch (throwable: Throwable) {
             showCrashScreen("Startup crash", throwable)
         }
@@ -45,17 +44,9 @@ class MainActivity : Activity() {
     private fun showPreviousCrash() {
         val file = File(filesDir, crashReportFile)
         if (!file.exists()) return
-
-        val report = try {
-            file.readText()
-        } catch (_: Throwable) {
-            ""
-        }
+        val report = try { file.readText() } catch (_: Throwable) { "" }
         file.delete()
-
-        if (report.isNotBlank()) {
-            showCrashScreen("Last crash report", report)
-        }
+        if (report.isNotBlank()) showCrashScreen("Last crash report", report)
     }
 
     private fun showCrashScreen(title: String, throwable: Throwable) {
@@ -83,10 +74,12 @@ class MainActivity : Activity() {
 
     private fun hideSystemUi() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.insetsController?.let { controller ->
-                controller.hide(WindowInsets.Type.systemBars())
-                controller.systemBarsBehavior =
-                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            window.decorView.post {
+                window.insetsController?.let { controller ->
+                    controller.hide(WindowInsets.Type.systemBars())
+                    controller.systemBarsBehavior =
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                }
             }
         } else {
             @Suppress("DEPRECATION")
