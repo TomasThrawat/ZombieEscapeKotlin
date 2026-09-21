@@ -37,6 +37,8 @@ class ZombieEscapeView(context: Context) : View(context) {
     private val worldHeight = 1000f
     private val playerRadius = 22f
     private val playerSpeed = 260f
+    private val zombieRadius = 25f
+    private val maxSpawnAttempts = 160
 
     private val zombies = ArrayList<Zombie>()
     private val obstacles = listOf(
@@ -48,6 +50,21 @@ class ZombieEscapeView(context: Context) : View(context) {
         RectF(1040f, 800f, 1230f, 910f)
     )
 
+    private val spawnFallbacks = arrayOf(
+        floatArrayOf(80f, 80f),
+        floatArrayOf(820f, 80f),
+        floatArrayOf(1450f, 80f),
+        floatArrayOf(1700f, 180f),
+        floatArrayOf(1550f, 380f),
+        floatArrayOf(1450f, 500f),
+        floatArrayOf(1700f, 850f),
+        floatArrayOf(1400f, 900f),
+        floatArrayOf(1100f, 700f),
+        floatArrayOf(650f, 820f),
+        floatArrayOf(850f, 320f),
+        floatArrayOf(1500f, 300f)
+    )
+
     private var state = State.MENU
     private var playerX = 140f
     private var playerY = 500f
@@ -55,6 +72,7 @@ class ZombieEscapeView(context: Context) : View(context) {
     private var shards = 0
     private var startTime = 0L
     private var lastFrame = 0L
+    private var framePosted = false
     private var joystickPointer = MotionEvent.INVALID_POINTER_ID
     private var joystickX = 0f
     private var joystickY = 0f
@@ -62,6 +80,17 @@ class ZombieEscapeView(context: Context) : View(context) {
     private var joystickBaseY = 0f
     private var joystickActive = false
     private var sprintHeld = false
+
+    private val frameLoop = object : Runnable {
+        override fun run() {
+            framePosted = false
+            if (state == State.PLAYING) {
+                update()
+                invalidate()
+                postFrame()
+            }
+        }
+    }
 
     private val shardPoints = arrayOf(
         floatArrayOf(300f, 310f),
@@ -76,12 +105,16 @@ class ZombieEscapeView(context: Context) : View(context) {
             "sans",
             android.graphics.Typeface.BOLD
         )
-        setLayerType(View.LAYER_TYPE_HARDWARE, null)
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(frameLoop)
+        framePosted = false
+        super.onDetachedFromWindow()
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (state == State.PLAYING) update()
         val w = width.toFloat()
         val h = height.toFloat()
 
@@ -98,7 +131,13 @@ class ZombieEscapeView(context: Context) : View(context) {
                 }
             }
         }
-        if (state == State.PLAYING) postInvalidateOnAnimation()
+    }
+
+    private fun postFrame() {
+        if (state == State.PLAYING && !framePosted && isAttachedToWindow) {
+            framePosted = true
+            postOnAnimation(frameLoop)
+        }
     }
 
     private fun drawMenu(canvas: Canvas, w: Float, h: Float) {
@@ -236,7 +275,7 @@ class ZombieEscapeView(context: Context) : View(context) {
     private fun drawZombies(canvas: Canvas) {
         for (zombie in zombies) {
             paint.color = android.graphics.Color.rgb(133, 67, 74)
-            canvas.drawCircle(zombie.x, zombie.y, 25f, paint)
+            canvas.drawCircle(zombie.x, zombie.y, zombieRadius, paint)
             paint.color = android.graphics.Color.rgb(198, 150, 120)
             canvas.drawCircle(zombie.x, zombie.y - 3f, 15f, paint)
             paint.color = android.graphics.Color.rgb(34, 42, 38)
@@ -395,6 +434,7 @@ class ZombieEscapeView(context: Context) : View(context) {
                     val pauseRect = RectF(width - 135f, 25f, width - 35f, 75f)
                     if (pauseRect.contains(px, py)) {
                         state = State.PAUSED
+                        stopFrameLoop()
                         invalidate()
                         return true
                     }
@@ -417,11 +457,15 @@ class ZombieEscapeView(context: Context) : View(context) {
                             if (state == State.PAUSED) {
                                 state = State.PLAYING
                                 lastFrame = SystemClock.uptimeMillis()
+                                postFrame()
                             } else {
                                 startGame()
                             }
                         }
-                        menuRect.contains(px, py) -> state = State.MENU
+                        menuRect.contains(px, py) -> {
+                            state = State.MENU
+                            stopFrameLoop()
+                        }
                     }
                 }
                 invalidate()
@@ -445,12 +489,16 @@ class ZombieEscapeView(context: Context) : View(context) {
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
                 val index = event.actionIndex
-                val pointerId = event.getPointerId(index)
+                val pointerId = if (index in 0 until event.pointerCount) {
+                    event.getPointerId(index)
+                } else {
+                    MotionEvent.INVALID_POINTER_ID
+                }
                 if (pointerId == joystickPointer) {
                     joystickPointer = MotionEvent.INVALID_POINTER_ID
                     joystickActive = false
-                    joystickX = 0f
-                    joystickY = 0f
+                    joystickX = joystickBaseX
+                    joystickY = joystickBaseY
                 }
                 if (x > width - 230f && y > height - 180f) sprintHeld = false
                 invalidate()
@@ -460,6 +508,7 @@ class ZombieEscapeView(context: Context) : View(context) {
     }
 
     private fun startGame() {
+        stopFrameLoop()
         state = State.PLAYING
         playerX = 140f
         playerY = 500f
@@ -467,23 +516,50 @@ class ZombieEscapeView(context: Context) : View(context) {
         shards = 0
         collected.fill(false)
         zombies.clear()
+        resetControls()
 
-        repeat(12) {
-            var x: Float
-            var y: Float
-            do {
+        repeat(12) { index ->
+            var x = 500f + rng.nextFloat() * 1050f
+            var y = 70f + rng.nextFloat() * 860f
+            var attempts = 0
+
+            while (
+                attempts < maxSpawnAttempts &&
+                (distance(x, y, playerX, playerY) < 260f || isBlocked(x, y, zombieRadius))
+            ) {
                 x = 500f + rng.nextFloat() * 1050f
                 y = 70f + rng.nextFloat() * 860f
-            } while (distance(x, y, playerX, playerY) < 260f || isBlocked(x, y))
+                attempts++
+            }
+
+            if (distance(x, y, playerX, playerY) < 260f || isBlocked(x, y, zombieRadius)) {
+                val fallback = spawnFallbacks[index % spawnFallbacks.size]
+                x = fallback[0]
+                y = fallback[1]
+            }
+
             zombies += Zombie(x, y)
         }
 
         startTime = SystemClock.uptimeMillis()
         lastFrame = startTime
+        postFrame()
+        invalidate()
+    }
+
+    private fun stopFrameLoop() {
+        removeCallbacks(frameLoop)
+        framePosted = false
+    }
+
+    private fun resetControls() {
         joystickPointer = MotionEvent.INVALID_POINTER_ID
+        joystickX = 0f
+        joystickY = 0f
+        joystickBaseX = 0f
+        joystickBaseY = 0f
         joystickActive = false
         sprintHeld = false
-        invalidate()
     }
 
     private fun update() {
@@ -529,9 +605,9 @@ class ZombieEscapeView(context: Context) : View(context) {
 
             val nx = zombie.x + zombie.vx * dt
             val ny = zombie.y + zombie.vy * dt
-            if (!isBlocked(nx, ny)) {
-                zombie.x = clamp(nx, 25f, worldWidth - 25f)
-                zombie.y = clamp(ny, 25f, worldHeight - 25f)
+            if (!isBlocked(nx, ny, zombieRadius)) {
+                zombie.x = clamp(nx, zombieRadius, worldWidth - zombieRadius)
+                zombie.y = clamp(ny, zombieRadius, worldHeight - zombieRadius)
             } else {
                 zombie.vx *= -0.5f
                 zombie.vy *= -0.5f
@@ -552,19 +628,24 @@ class ZombieEscapeView(context: Context) : View(context) {
         if (health <= 0f) {
             health = 0f
             state = State.LOST
+            stopFrameLoop()
+            invalidate()
+            return
         }
 
         if (shards == shardPoints.size && exitRect.contains(playerX, playerY)) {
             state = State.WON
+            stopFrameLoop()
+            invalidate()
         }
     }
 
     private fun movePlayer(dx: Float, dy: Float) {
         val nextX = clamp(playerX + dx, playerRadius, worldWidth - playerRadius)
-        if (!isBlocked(nextX, playerY)) playerX = nextX
+        if (!isBlocked(nextX, playerY, playerRadius)) playerX = nextX
 
         val nextY = clamp(playerY + dy, playerRadius, worldHeight - playerRadius)
-        if (!isBlocked(playerX, nextY)) playerY = nextY
+        if (!isBlocked(playerX, nextY, playerRadius)) playerY = nextY
     }
 
     private fun separateZombies() {
@@ -589,13 +670,13 @@ class ZombieEscapeView(context: Context) : View(context) {
         }
     }
 
-    private fun isBlocked(x: Float, y: Float): Boolean {
+    private fun isBlocked(x: Float, y: Float, radius: Float): Boolean {
         for (rect in obstacles) {
             if (
-                x + playerRadius > rect.left &&
-                x - playerRadius < rect.right &&
-                y + playerRadius > rect.top &&
-                y - playerRadius < rect.bottom
+                x + radius > rect.left &&
+                x - radius < rect.right &&
+                y + radius > rect.top &&
+                y - radius < rect.bottom
             ) return true
         }
         return false
